@@ -294,7 +294,7 @@ def test_adaline_alpha(alpha):
 def tests_3():
     print("\nTEST ALPHA \n")
     print("Perceptron")
-    alphas = [0.005, 0.01, 0.03, 0.05, 0.1, 0.15]
+    alphas = [0.0001, 0.0005 ,0.001, 0.005, 0.01, 0.03, 0.05, 0.1, 0.15]
     for alpha in alphas:
         sum = 0
         for j in range(10):
@@ -330,7 +330,21 @@ def tests_4():
     print(sum/100)
 
 
-# xDxDxdxdDXD
+def test_adaline_threshold(threshold):
+    model = AdalineBias(2, bipolar)
+    data = [([-1, -1], -1), ([-1, 1], -1), ([1, -1], -1), ([1, 1], 1)]
+    return model.learn(data, 0.01, threshold)
+
+
+# Ada 3
+def tests_5():
+    print("\nTEST THRESHOLD\n")
+    for i in range(8):
+        threshold = 0.1 * (i + 3)
+        sum = 0
+        for j in range(10):
+            sum += test_adaline_threshold(threshold)
+        print(str(threshold) + ", " + str(sum/10))
 
 
 if __name__ == "__main__":
@@ -338,6 +352,7 @@ if __name__ == "__main__":
     tests_2()
     tests_3()
     tests_4()
+    tests_5()
 
     # model = PerceptronBias(2, unipolar, 0.2)
     # data = [([0, 0], 0), ([0, 1], 0), ([1, 0], 0), ([1, 1], 1)]
