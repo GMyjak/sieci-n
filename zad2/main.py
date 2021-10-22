@@ -1,6 +1,8 @@
 import numpy
 from mnist import MNIST
 
+# todo bias -> wagi input + 1, dodać 1 na końcu wektora wejściowego
+
 class Layer:
     def __init__(self, input_size, output_size, function):
         self.input_size = input_size
@@ -11,24 +13,17 @@ class Layer:
 
 
     def init_weights(self, std_dev):
-        self.weights = numpy.random.normal(0, std_dev, size=(self.output_size, self.input_size))
+        self.weights = numpy.random.normal(0, std_dev, size=(self.input_size, self.output_size))
         self.bias = numpy.random.normal(0, std_dev, size=self.output_size)
         return self
 
 
     def output(self, input):
-        return self.weights @ numpy.transpose(input) + self.bias
+        return input @ self.weights + self.bias
 
 
     def activated_output(self, input):
         return [self.function(z) for z in self.output(input)]
-
-
-#    def softmax(self, input):
-#        results = self.activated_output(input)
-#        results_e = [numpy.e ** a for a in results]
-#        sum = numpy.sum(results_e)
-#        return [ezj / sum for ezj in results_e]
 
 
 class MLP:
@@ -72,6 +67,7 @@ def softmax(results):
 
 def main():
     test_data()
+    #test_mlp()
 
 
 def test_data():
@@ -79,7 +75,7 @@ def test_data():
     images, labels = mndata.load_training()
 
     model = MLP()
-    model.add_layer(Layer(784, 300, tanh).init_weights(1))
+    model.add_layer(Layer(784, 300, tanh).init_weights(0.1))
     model.add_layer(Layer(300, 300, tanh).init_weights(1))
     model.add_layer(Layer(300, 10, tanh).init_weights(1))
     print("PREDICTION:", model.predict(images[0]))
