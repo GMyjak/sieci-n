@@ -2,14 +2,6 @@ import numpy
 from mnist import MNIST
 
 
-# jak zrobić to zadanie
-# uaktualnianie wag - dla każdej warstwy:
-#   zapamiętać aktywację - to łatwe
-#   policzyć tchibo
-# żeby policzyć tchibo:
-#   gradient softmax - hardcode?
-#   inne gradienty :)
-
 class Layer:
     def __init__(self, input_size, output_size, function, function_der, smax = False):
         self.input_size = input_size
@@ -19,7 +11,8 @@ class Layer:
         self.smax = smax
         self.bias = []
         self.weights = []
-        self.last_activation = []
+        self.last_batch_output = []
+        self.last_batch_activation = []
 
 
     def init_weights(self, std_dev):
@@ -31,13 +24,25 @@ class Layer:
     def output(self, input):
         return input @ self.weights + self.bias
 
+    
+    def batch_output(self, inputs):
+        return inputs @ self.weights + self.bias
+
 
     def activated_output(self, input):
         if self.smax:
-            self.last_activation = self.function(self.output(input))
+            return self.function(self.output(input))
         else:
-            self.last_activation = [self.function(z) for z in self.output(input)]
-        return self.last_activation
+            return [self.function(z) for z in self.output(input)]
+
+    
+    def batch_activated_output(self, inputs):
+        bout = self.batch_output(inputs)
+        if self.smax:
+            return numpy.array([self.function(bout[i,:]) for i in range(bout.shape[0])])
+        else:
+            f = numpy.vectorize(self.function)
+            return f(bout)
 
 
     def nl_error(self, sample, correct):
@@ -72,6 +77,68 @@ class MLP:
     def learn(self, sample):
         self.predict(sample)
 
+    # batch [i_sample, i_neuron]
+    def learn_batch(self, batch, pred, alpha=0.001):
+
+        # Propagacja wprzód
+        out0 = self.layers[0].batch_output(batch)
+        act0 = self.layers[0].batch_activated_output(batch)
+
+        out1 = self.layers[1].batch_output(act0)
+        act1 = self.layers[1].batch_activated_output(act0)
+
+        out2 = self.layers[2].batch_output(act1)
+        act2 = self.layers[2].batch_activated_output(act1)
+
+        # Liczenie błędów
+
+        # tchibo [i_sample, i_neuron, i_weight]
+        tchibo2 = numpy.zeros((batch.shape[0], self.layers[2].output_size, self.layers[2].input_size))
+        for i in range(batch.shape[0]):
+            smax_der_res = softmax_der(out2[i,:], pred[i])
+            err = numpy.outer(smax_der_res, act1[i,:])
+            tchibo2[i,:,:] = err
+
+        #print(tchibo2)
+
+        tchibo1 = numpy.zeros((batch.shape[0], self.layers[1].output_size, self.layers[1].input_size))
+        for i in range(batch.shape[0]):    
+            z3a2 = self.layers[2].weights @ tchibo2[i,:,:]
+            #print(z3a2)
+            der1 = numpy.vectorize(self.layers[1].function_der)
+            a2z2 = der1(out1[i,:])
+            #print(a2z2)
+            err = z3a2 @ a2z2
+            err = numpy.outer(err, act0[i,:])
+            #print(err)
+            tchibo1[i,:,:] = err
+        
+        #print(tchibo1)
+
+        tchibo0 = numpy.zeros((batch.shape[0], self.layers[0].output_size, self.layers[0].input_size))
+        for i in range(batch.shape[0]):
+            z2a1 = self.layers[1].weights @ tchibo1[i,:,:]
+            #print(z2a1)
+            der0 = numpy.vectorize(self.layers[0].function_der)
+            a1z1 = der0(out0[i,:])
+            #print(a1z1)
+            err = z2a1 @ a1z1
+            err = numpy.outer(err, batch[i,:])
+            #print(err)
+            tchibo0[i,:,:] = err
+        
+        # print(tchibo1)
+
+        # Aktualizacja wag
+        for i in range(batch.shape[0]):
+            # print(tchibo2.shape)
+            # print(act1.shape)
+            # print(self.layers[2].weights.shape)
+            do_akt = tchibo2 @ act1
+            print(do_akt.shape)
+    
+            
+
 
 
 def relu(z):
@@ -104,20 +171,28 @@ def tanh_der(z):
 
 def softmax(results):
     results_e = [numpy.e ** a for a in results]
-    for a in results:
-        print(a)
     sum = numpy.sum(results_e)
     return [ezj / sum for ezj in results_e]
 
 
-def softmax_der(results):
-    smax = softmax(results)
-    return [-()]
+def softmax_der(z, y):
+    smax = softmax(z)
+    return [-(y[i] - smax[i]) for i in range(len(z))]
 
 
 def main():
-    test_data()
-    #test_mlp()
+    test_learn()
+
+
+def test_learn():
+    model = MLP()
+    model.add_layer(Layer(4, 3, relu, relu_der).init_weights(1))
+    model.add_layer(Layer(3, 3, relu, relu_der).init_weights(1))
+    model.add_layer(Layer(3, 2, softmax, softmax_der, True).init_weights(1))
+
+    data = numpy.array([[0.1, 0.2, 0.5, 0.2],[0.5, 0.2, 0.4, 0.1],[0.4, 0.2, 0.9, 0.1]])
+    pred = numpy.array([[1, 1], [1, 0], [0, 1]])
+    model.learn_batch(data, pred)
 
 
 def test_data():
@@ -127,7 +202,7 @@ def test_data():
     model = MLP()
     model.add_layer(Layer(784, 300, relu, relu_der).init_weights(0.01))
     model.add_layer(Layer(300, 300, relu, relu_der).init_weights(0.01))
-    model.add_layer(Layer(300, 10, softmax, None, True).init_weights(0.01))
+    model.add_layer(Layer(300, 10, softmax, softmax_der, True).init_weights(0.01))
     print("PREDICTION:", model.predict(images[0]))
     print("REAL:", labels[0])
 
@@ -136,7 +211,7 @@ def test_mlp():
     model = MLP()
     model.add_layer(Layer(3, 10, relu, relu_der).init_weights(1))
     model.add_layer(Layer(10, 15, relu, relu_der).init_weights(1))
-    model.add_layer(Layer(15, 5, softmax, None, True).init_weights(1))
+    model.add_layer(Layer(15, 5, softmax, softmax_der, True).init_weights(1))
     print(model.predict([0.2, 0.6, 0.3]))
 
 
