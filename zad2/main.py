@@ -45,14 +45,6 @@ class Layer:
             return f(bout)
 
 
-    def nl_error(self, sample, correct):
-        sum = 0
-        for j in len(sample):
-            sum += -numpy.log(self.last_activation[j]) * correct[j]
-        return sum
-
-
-
 class MLP:
     def __init__(self):
         self.input_size = 0
@@ -74,9 +66,6 @@ class MLP:
         return output
 
 
-    def learn(self, sample):
-        self.predict(sample)
-
     # batch [i_sample, i_neuron]
     def learn_batch(self, batch, pred, alpha=0.001):
 
@@ -92,53 +81,35 @@ class MLP:
 
         # Liczenie błędów
 
-        # tchibo [i_sample, i_neuron, i_weight]
-        tchibo2 = numpy.zeros((batch.shape[0], self.layers[2].output_size, self.layers[2].input_size))
+        delta_matrix_2 = numpy.zeros((batch.shape[0], self.layers[2].output_size))
         for i in range(batch.shape[0]):
-            smax_der_res = softmax_der(out2[i,:], pred[i])
-            err = numpy.outer(smax_der_res, act1[i,:])
-            tchibo2[i,:,:] = err
+            smax_der_res = softmax_der(act2[i,:], pred[i])
+            delta_matrix_2[i:] = smax_der_res
+        matrix_2_sum = numpy.sum(delta_matrix_2, axis=0)
 
-        #print(tchibo2)
+        der1 = numpy.vectorize(self.layers[1].function_der)
+        delta_matrix_1 = (delta_matrix_2 @ self.layers[2].weights.T) * der1(out1.T)
+        matrix_1_sum = numpy.sum(delta_matrix_1, axis=0)
 
-        tchibo1 = numpy.zeros((batch.shape[0], self.layers[1].output_size, self.layers[1].input_size))
-        for i in range(batch.shape[0]):    
-            z3a2 = self.layers[2].weights @ tchibo2[i,:,:]
-            #print(z3a2)
-            der1 = numpy.vectorize(self.layers[1].function_der)
-            a2z2 = der1(out1[i,:])
-            #print(a2z2)
-            err = z3a2 @ a2z2
-            err = numpy.outer(err, act0[i,:])
-            #print(err)
-            tchibo1[i,:,:] = err
+        der0 = numpy.vectorize(self.layers[0].function_der)
+        delta_matrix_0 = (delta_matrix_1 @ self.layers[1].weights.T) * der0(out0.T)
+        matrix_0_sum = numpy.sum(delta_matrix_0, axis=0)
+
+        print(act1.T.shape)
         
-        #print(tchibo1)
-
-        tchibo0 = numpy.zeros((batch.shape[0], self.layers[0].output_size, self.layers[0].input_size))
-        for i in range(batch.shape[0]):
-            z2a1 = self.layers[1].weights @ tchibo1[i,:,:]
-            #print(z2a1)
-            der0 = numpy.vectorize(self.layers[0].function_der)
-            a1z1 = der0(out0[i,:])
-            #print(a1z1)
-            err = z2a1 @ a1z1
-            err = numpy.outer(err, batch[i,:])
-            #print(err)
-            tchibo0[i,:,:] = err
         
-        # print(tchibo1)
-
         # Aktualizacja wag
-        for i in range(batch.shape[0]):
-            # print(tchibo2.shape)
-            # print(act1.shape)
-            # print(self.layers[2].weights.shape)
-            do_akt = tchibo2 @ act1
-            print(do_akt.shape)
-    
-            
-
+        self.layers[2].weights = self.layers[2].weights - (alpha / batch.shape[0]) * (act2 * matrix_2_sum.T)
+        self.layers[2].bias = self.layers[2].bias - (alpha / batch.shape[0]) * matrix_2_sum
+        
+        self.layers[1].weights = self.layers[1].weights - (alpha / batch.shape[0]) * (act1 * delta_matrix_1)
+        self.layers[1].bias = self.layers[1].bias - (alpha / batch.shape[0]) * matrix_1_sum
+        
+        #print(self.layers[0].weights.shape)
+        #print(delta_matrix_0.shape)
+        #print(act0.shape)
+        self.layers[0].weights = self.layers[0].weights - (alpha / batch.shape[0]) * (act0 * delta_matrix_0)
+        self.layers[0].bias = self.layers[0].bias - (alpha / batch.shape[0]) * matrix_0_sum
 
 
 def relu(z):
@@ -175,9 +146,16 @@ def softmax(results):
     return [ezj / sum for ezj in results_e]
 
 
-def softmax_der(z, y):
-    smax = softmax(z)
-    return [-(y[i] - smax[i]) for i in range(len(z))]
+def softmax_der(act, y):
+    return numpy.array([-(y[i] - act[i]) for i in range(len(act))])
+
+
+def nll(predicts, corrects):
+    sum = 0
+    for i in range(predicts.shape[0]):
+        for j in range(predicts.shape[1]):
+            sum += -numpy.log(predicts[i,j]) * corrects[i,j]
+    return sum / predicts.shape[0]
 
 
 def main():
@@ -192,7 +170,7 @@ def test_learn():
 
     data = numpy.array([[0.1, 0.2, 0.5, 0.2],[0.5, 0.2, 0.4, 0.1],[0.4, 0.2, 0.9, 0.1]])
     pred = numpy.array([[1, 1], [1, 0], [0, 1]])
-    model.learn_batch(data, pred)
+    model.learn_batch(data, pred, 0.1)
 
 
 def test_data():
