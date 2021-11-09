@@ -2,6 +2,18 @@ import numpy
 from mnist import MNIST
 
 
+label_matrix = [[1,0,0,0,0,0,0,0,0,0],
+                [0,1,0,0,0,0,0,0,0,0],
+                [0,0,1,0,0,0,0,0,0,0],
+                [0,0,0,1,0,0,0,0,0,0],
+                [0,0,0,0,1,0,0,0,0,0],
+                [0,0,0,0,0,1,0,0,0,0],
+                [0,0,0,0,0,0,1,0,0,0],
+                [0,0,0,0,0,0,0,1,0,0],
+                [0,0,0,0,0,0,0,0,1,0],
+                [0,0,0,0,0,0,0,0,0,1]]
+
+
 class Layer:
     def __init__(self, input_size, output_size, function, function_der, smax = False):
         self.input_size = input_size
@@ -65,9 +77,51 @@ class MLP:
             output = layer.activated_output(output)
         return output
 
+    
+    def batch_predict(self, inputs):
+        outputs = inputs
+        for layer in self.layers:
+            outputs = layer.batch_activated_output(outputs)
+        return outputs
+
+    
+    def get_accuracy(self, data, labels):
+        outputs = self.batch_predict(data)
+        predicts = [numpy.argmax(row) for row in outputs]
+        correct_predicts = [numpy.argmax(row) for row in labels]
+        sum = 0
+        for i in range(data.shape[0]):
+            if predicts[i] == correct_predicts[i]:
+                sum += 1
+        acc = sum / data.shape[0]
+        return int(acc * 1000) / 10
+
+
+    def learn(self, train_data_samples, train_data_labels, valid_data_samples, valid_data_labels, batch_size, alpha):
+        tr_data = numpy.array(train_data_samples)
+        tr_labels = numpy.array([label_matrix[i] for i in train_data_labels])
+        vl_data = numpy.array(valid_data_samples)
+        vl_labels = numpy.array([label_matrix[i] for i in valid_data_labels])
+    
+        acc = self.get_accuracy(vl_data, vl_labels)
+        print("INIT ACC:", acc)
+
+        # 10 epochs
+        for e in range(100):    
+            # single epoch
+            for i in range(int(tr_data.shape[0]/batch_size)):
+                start_index = i * batch_size
+                end_index = (i + 1) * batch_size - 1
+                batch = tr_data[start_index:end_index,:]
+                batch_labels = tr_labels[start_index:end_index,:]
+                start_err, end_err, diff = self.learn_minibatch(batch, batch_labels, alpha=alpha)
+            print("ERROR:", end_err)
+            acc = self.get_accuracy(vl_data, vl_labels)
+            print("ACC:", acc)
+
 
     # batch [i_sample, i_neuron]
-    def learn_batch(self, batch, pred, alpha=0.001):
+    def learn_minibatch(self, batch, pred, alpha=0.001):
 
         # Propagacja wprzód
         out0 = self.layers[0].batch_output(batch)
@@ -79,37 +133,34 @@ class MLP:
         out2 = self.layers[2].batch_output(act1)
         act2 = self.layers[2].batch_activated_output(act1)
 
-        # Liczenie błędów
+        err_init = nll(act2, pred)
 
+        # Liczenie błędów
         delta_matrix_2 = numpy.zeros((batch.shape[0], self.layers[2].output_size))
         for i in range(batch.shape[0]):
             smax_der_res = softmax_der(act2[i,:], pred[i])
-            delta_matrix_2[i:] = smax_der_res
-        matrix_2_sum = numpy.sum(delta_matrix_2, axis=0)
+            delta_matrix_2[i,:] = smax_der_res
 
         der1 = numpy.vectorize(self.layers[1].function_der)
-        delta_matrix_1 = (delta_matrix_2 @ self.layers[2].weights.T) * der1(out1.T)
-        matrix_1_sum = numpy.sum(delta_matrix_1, axis=0)
+        delta_matrix_1 = (delta_matrix_2 @ self.layers[2].weights.T) * der1(out1)
 
         der0 = numpy.vectorize(self.layers[0].function_der)
-        delta_matrix_0 = (delta_matrix_1 @ self.layers[1].weights.T) * der0(out0.T)
-        matrix_0_sum = numpy.sum(delta_matrix_0, axis=0)
-
-        print(act1.T.shape)
-        
+        delta_matrix_0 = (delta_matrix_1 @ self.layers[1].weights.T) * der0(out0)
         
         # Aktualizacja wag
-        self.layers[2].weights = self.layers[2].weights - (alpha / batch.shape[0]) * (act2 * matrix_2_sum.T)
-        self.layers[2].bias = self.layers[2].bias - (alpha / batch.shape[0]) * matrix_2_sum
-        
-        self.layers[1].weights = self.layers[1].weights - (alpha / batch.shape[0]) * (act1 * delta_matrix_1)
-        self.layers[1].bias = self.layers[1].bias - (alpha / batch.shape[0]) * matrix_1_sum
-        
-        #print(self.layers[0].weights.shape)
-        #print(delta_matrix_0.shape)
-        #print(act0.shape)
-        self.layers[0].weights = self.layers[0].weights - (alpha / batch.shape[0]) * (act0 * delta_matrix_0)
-        self.layers[0].bias = self.layers[0].bias - (alpha / batch.shape[0]) * matrix_0_sum
+        for i in range(batch.shape[0]):
+            self.layers[2].weights = self.layers[2].weights - (alpha / batch.shape[0]) * numpy.outer(act1[i,:], delta_matrix_2[i,:])
+            self.layers[1].weights = self.layers[1].weights - (alpha / batch.shape[0]) * numpy.outer(act0[i,:], delta_matrix_1[i,:])
+            self.layers[0].weights = self.layers[0].weights - (alpha / batch.shape[0]) * numpy.outer(batch[i,:], delta_matrix_0[i,:])
+            self.layers[2].bias = self.layers[2].bias - (alpha / batch.shape[0]) * delta_matrix_2[i,:]
+            self.layers[1].bias = self.layers[1].bias - (alpha / batch.shape[0]) * delta_matrix_1[i,:]
+            self.layers[0].bias = self.layers[0].bias - (alpha / batch.shape[0]) * delta_matrix_0[i,:]
+
+        pred_after_update = self.batch_predict(batch)
+        err_after = nll(pred_after_update, pred)
+
+        diff = err_init - err_after
+        return (err_init, err_after, diff)
 
 
 def relu(z):
@@ -159,7 +210,19 @@ def nll(predicts, corrects):
 
 
 def main():
-    test_learn()
+    learn_with_mnist()
+
+
+def learn_with_mnist():
+    mndata = MNIST('./data/ubyte/')
+    tr_images, tr_labels = mndata.load_training()
+    vl_images, vl_labels = mndata.load_testing()
+
+    model = MLP()
+    model.add_layer(Layer(784, 30, relu, relu_der).init_weights(0.1))
+    model.add_layer(Layer(30, 30, relu, relu_der).init_weights(0.1))
+    model.add_layer(Layer(30, 10, softmax, softmax_der, True).init_weights(0.1))
+    model.learn(tr_images, tr_labels, vl_images, vl_labels, 1000, 0.0004)
 
 
 def test_learn():
@@ -170,11 +233,23 @@ def test_learn():
 
     data = numpy.array([[0.1, 0.2, 0.5, 0.2],[0.5, 0.2, 0.4, 0.1],[0.4, 0.2, 0.9, 0.1]])
     pred = numpy.array([[1, 1], [1, 0], [0, 1]])
-    model.learn_batch(data, pred, 0.1)
+    #for i in range(100):
+    #    init, after, diff = model.learn_minibatch(data, pred, 0.01)
+    #    if i == 0:
+    #        print("init:" , init)
+    #    print(diff)
+    #    if i == 99:
+    #        print("end:" , after)
+    init, after, diff = model.learn_minibatch(data, pred, 0.01)
+    print("init:" , init)
+    while diff > 0:
+        init, after, diff = model.learn_minibatch(data, pred, 0.01)
+        print(diff)
+    print("end:" , after)
 
 
 def test_data():
-    mndata = MNIST('./zad2/data/ubyte/')
+    mndata = MNIST('C:/Users/Grzegorz/source/repos/sieci-n/zad2/data/ubyte/')
     images, labels = mndata.load_training()
 
     model = MLP()
