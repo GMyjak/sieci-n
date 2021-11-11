@@ -1,5 +1,11 @@
 import numpy
 from mnist import MNIST
+import matplotlib.pyplot as plt
+
+MIN_ACT_SIGM = -10
+MAX_ACT_SIGM = 10
+
+NUM_OF_EXPERIMENTS = 5
 
 
 label_matrix = [[1,0,0,0,0,0,0,0,0,0],
@@ -23,8 +29,8 @@ class Layer:
         self.smax = smax
         self.bias = []
         self.weights = []
-        self.last_batch_output = []
-        self.last_batch_activation = []
+        self.best_bias = None
+        self.best_weights = None
 
 
     def init_weights(self, std_dev):
@@ -57,6 +63,21 @@ class Layer:
             return f(bout)
 
 
+    def normalize_weights(self, min, max):
+        self.weights = numpy.clip(self.weights, min, max)
+        self.bias = numpy.clip(self.bias, min, max)
+
+    
+    def save_best_weights(self):
+        self.best_bias = self.bias
+        self.best_weights = self.weights
+
+
+    def load_best_weights(self):
+        self.bias = self.best_bias
+        self.weights = self.best_weights
+
+
 class MLP:
     def __init__(self):
         self.input_size = 0
@@ -85,6 +106,21 @@ class MLP:
         return outputs
 
     
+    def normalize_weights(self, min, max):
+        for layer in self.layers:
+            layer.normalize_weights(min, max)
+
+    
+    def save_best_weights(self):
+        for layer in self.layers:
+            layer.save_best_weights()
+
+
+    def load_best_weights(self):
+        for layer in self.layers:
+            layer.load_best_weights()
+
+    
     def get_accuracy(self, data, labels):
         outputs = self.batch_predict(data)
         predicts = [numpy.argmax(row) for row in outputs]
@@ -97,27 +133,62 @@ class MLP:
         return int(acc * 1000) / 10
 
 
-    def learn(self, train_data_samples, train_data_labels, valid_data_samples, valid_data_labels, batch_size, alpha):
+    def learn(self, train_data_samples, train_data_labels, valid_data_samples, valid_data_labels, batch_size, alpha, threshold=-1):
         tr_data = numpy.array(train_data_samples)
         tr_labels = numpy.array([label_matrix[i] for i in train_data_labels])
         vl_data = numpy.array(valid_data_samples)
         vl_labels = numpy.array([label_matrix[i] for i in valid_data_labels])
     
-        acc = self.get_accuracy(vl_data, vl_labels)
-        print("INIT ACC:", acc)
+        accs = []
+        errs = []
+        epochs = []
 
-        # 10 epochs
-        for e in range(100):    
+        acc = self.get_accuracy(vl_data, vl_labels)
+        # print("INIT ACC:", acc)
+        epoch_count = 0
+        epochs_without_improvement = 0
+        best_err = 9999999
+
+        while epochs_without_improvement < 3 and epoch_count < 300 and best_err > threshold:
             # single epoch
+            epoch_count += 1
             for i in range(int(tr_data.shape[0]/batch_size)):
                 start_index = i * batch_size
                 end_index = (i + 1) * batch_size - 1
                 batch = tr_data[start_index:end_index,:]
                 batch_labels = tr_labels[start_index:end_index,:]
                 start_err, end_err, diff = self.learn_minibatch(batch, batch_labels, alpha=alpha)
-            print("ERROR:", end_err)
             acc = self.get_accuracy(vl_data, vl_labels)
-            print("ACC:", acc)
+            if end_err > best_err:
+                epochs_without_improvement += 1
+            else:
+                self.save_best_weights()
+                epochs_without_improvement = 0
+                best_err = end_err
+
+            epochs.append(epoch_count)
+            errs.append(end_err)
+            accs.append(acc)
+
+            #print("EPOCH:", epoch_count)
+            #print("ERROR:", end_err)
+            #print("ACC:", acc)
+
+        if epochs_without_improvement > 0:
+            self.load_best_weights()
+            epoch_count -= 3
+            acc = self.get_accuracy(vl_data, vl_labels)
+            start_err, end_err, diff = self.learn_minibatch(batch, batch_labels, alpha=alpha)
+            end_err = start_err
+
+        # end report
+        print("TOTAL EPOCH:", epoch_count)
+        print("END ERROR:", end_err)
+        print("END ACC:", acc)
+        print("EARLY STOP:", epochs_without_improvement > 0)
+
+        return epoch_count, end_err, acc, epochs_without_improvement > 0, epochs, errs, accs
+
 
 
     # batch [i_sample, i_neuron]
@@ -135,7 +206,7 @@ class MLP:
 
         err_init = nll(act2, pred)
 
-        # Liczenie błędów
+        # Liczenie gradientów
         delta_matrix_2 = numpy.zeros((batch.shape[0], self.layers[2].output_size))
         for i in range(batch.shape[0]):
             smax_der_res = softmax_der(act2[i,:], pred[i])
@@ -156,6 +227,8 @@ class MLP:
             self.layers[1].bias = self.layers[1].bias - (alpha / batch.shape[0]) * delta_matrix_1[i,:]
             self.layers[0].bias = self.layers[0].bias - (alpha / batch.shape[0]) * delta_matrix_0[i,:]
 
+        self.normalize_weights(MIN_ACT_SIGM, MAX_ACT_SIGM)
+
         pred_after_update = self.batch_predict(batch)
         err_after = nll(pred_after_update, pred)
 
@@ -164,7 +237,7 @@ class MLP:
 
 
 def relu(z):
-    return z if z >= 0 else 0
+    return max(z, 100) if z >= 0 else 0
 
 
 def relu_der(z):
@@ -174,6 +247,7 @@ def relu_der(z):
 
 
 def sigmoid(z):
+    z = numpy.clip(z, MIN_ACT_SIGM, MAX_ACT_SIGM)
     return 1 / (1 + numpy.e ** -z)
 
 
@@ -183,6 +257,7 @@ def sigmoid_der(z):
 
 
 def tanh(z):
+    z = numpy.clip(z, MIN_ACT_SIGM, MAX_ACT_SIGM)
     return 2 / (1 + numpy.e ** (-2 * z)) - 1
 
 
@@ -192,7 +267,7 @@ def tanh_der(z):
 
 
 def softmax(results):
-    results_e = [numpy.e ** a for a in results]
+    results_e = [numpy.e ** (a/numpy.max(results)) for a in results]
     sum = numpy.sum(results_e)
     return [ezj / sum for ezj in results_e]
 
@@ -210,7 +285,106 @@ def nll(predicts, corrects):
 
 
 def main():
-    learn_with_mnist()
+    test_hidden_layer_size()
+
+
+def test_hidden_layer_size():
+    mndata = MNIST('./data/ubyte/')
+    tr_images, tr_labels = mndata.load_training()
+    vl_images, vl_labels = mndata.load_testing()
+
+    print("Start learning...")
+    
+    model1 = MLP()
+    model1.add_layer(Layer(784, 30, relu, relu_der).init_weights(0.1))
+    model1.add_layer(Layer(30, 30, relu, relu_der).init_weights(0.1))
+    model1.add_layer(Layer(30, 10, softmax, softmax_der, True).init_weights(0.1))
+    data1 = model1.learn(tr_images, tr_labels, vl_images, vl_labels, 1000, 0.01, threshold=0.25)
+
+    print("Model 1 complete...")
+
+    model2 = MLP()
+    model2.add_layer(Layer(784, 50, relu, relu_der).init_weights(0.1))
+    model2.add_layer(Layer(50, 50, relu, relu_der).init_weights(0.1))
+    model2.add_layer(Layer(50, 10, softmax, softmax_der, True).init_weights(0.1))
+    data2 = model2.learn(tr_images, tr_labels, vl_images, vl_labels, 1000, 0.01, threshold=0.30)
+
+    print("Model 2 complete...")
+
+    model3 = MLP()
+    model3.add_layer(Layer(784, 100, relu, relu_der).init_weights(0.1))
+    model3.add_layer(Layer(100, 100, relu, relu_der).init_weights(0.1))
+    model3.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
+    data3 = model3.learn(tr_images, tr_labels, vl_images, vl_labels, 1000, 0.01, threshold=0.30)
+
+    print("Model 3 complete...")
+
+    model4 = MLP()
+    model4.add_layer(Layer(784, 300, relu, relu_der).init_weights(0.1))
+    model4.add_layer(Layer(300, 100, relu, relu_der).init_weights(0.1))
+    model4.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
+    data4 = model4.learn(tr_images, tr_labels, vl_images, vl_labels, 1000, 0.01, threshold=0.30)
+
+    print("Model 4 complete...")
+
+    model5 = MLP()
+    model5.add_layer(Layer(784, 500, relu, relu_der).init_weights(0.1))
+    model5.add_layer(Layer(500, 150, relu, relu_der).init_weights(0.1))
+    model5.add_layer(Layer(150, 10, softmax, softmax_der, True).init_weights(0.1))
+    data5 = model5.learn(tr_images, tr_labels, vl_images, vl_labels, 1000, 0.01, threshold=0.30)
+
+    print("Model 5 complete...")
+
+    print(data1)
+    print(data2)
+    print(data3)
+    print(data4)
+    print(data5)
+
+    x = range(100)
+    epo1 = data1[4][0:99]
+    err1 = data1[5][0:99]
+    acc1 = data1[6][0:99]
+
+    epo2 = data2[4][0:99]
+    err2 = data2[5][0:99]
+    acc2 = data2[6][0:99]
+
+    epo3 = data3[4][0:99]
+    err3 = data3[5][0:99]
+    acc3 = data3[6][0:99]
+
+    epo4 = data4[4][0:99]
+    err4 = data4[5][0:99]
+    acc4 = data4[6][0:99]
+
+    epo5 = data5[4][0:99]
+    err5 = data5[5][0:99]
+    acc5 = data5[6][0:99]
+    
+    plt.plot(x, err1, label = '30, 30')
+    plt.plot(x, err2, label = '50, 50')
+    plt.plot(x, err3, label = '100, 100')
+    plt.plot(x, err4, label = '300, 100')
+    plt.plot(x, err5, label = '500, 150')
+    
+    plt.xlabel('epoch')
+    plt.ylabel('error')
+    plt.title('Spadek błędu w zależności od rozmiaru warstw ukrytych')
+    plt.savefig('image1.png')
+    plt.show()
+
+    plt.plot(x, acc1, label = '30, 30')
+    plt.plot(x, acc2, label = '50, 50')
+    plt.plot(x, acc3, label = '100, 100')
+    plt.plot(x, acc4, label = '300, 100')
+    plt.plot(x, acc5, label = '500, 150')
+    
+    plt.xlabel('epoch')
+    plt.ylabel('accuracy')
+    plt.title('Wzrost skuteczności w zależności od rozmiaru warstw ukrytych')
+    plt.savefig('image2.png')
+    plt.show()
 
 
 def learn_with_mnist():
@@ -222,7 +396,7 @@ def learn_with_mnist():
     model.add_layer(Layer(784, 30, relu, relu_der).init_weights(0.1))
     model.add_layer(Layer(30, 30, relu, relu_der).init_weights(0.1))
     model.add_layer(Layer(30, 10, softmax, softmax_der, True).init_weights(0.1))
-    model.learn(tr_images, tr_labels, vl_images, vl_labels, 1000, 0.0004)
+    model.learn(tr_images, tr_labels, vl_images, vl_labels, 1000, 0.005)
 
 
 def test_learn():
@@ -233,13 +407,6 @@ def test_learn():
 
     data = numpy.array([[0.1, 0.2, 0.5, 0.2],[0.5, 0.2, 0.4, 0.1],[0.4, 0.2, 0.9, 0.1]])
     pred = numpy.array([[1, 1], [1, 0], [0, 1]])
-    #for i in range(100):
-    #    init, after, diff = model.learn_minibatch(data, pred, 0.01)
-    #    if i == 0:
-    #        print("init:" , init)
-    #    print(diff)
-    #    if i == 99:
-    #        print("end:" , after)
     init, after, diff = model.learn_minibatch(data, pred, 0.01)
     print("init:" , init)
     while diff > 0:
