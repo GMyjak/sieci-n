@@ -1,9 +1,8 @@
 import numpy
 from mnist import MNIST
-import matplotlib.pyplot as plt
 
-MIN_ACT_SIGM = -10
-MAX_ACT_SIGM = 10
+MIN_ACT_SIGM = -200
+MAX_ACT_SIGM = 200
 
 NUM_OF_EXPERIMENTS = 5
 
@@ -134,14 +133,16 @@ class MLP:
 
 
     def learn(self, train_data_samples, train_data_labels, valid_data_samples, valid_data_labels, batch_size, alpha, threshold=-1):
-        tr_data = numpy.array(train_data_samples)
+        tr_data = numpy.array(train_data_samples) / 255
         tr_labels = numpy.array([label_matrix[i] for i in train_data_labels])
-        vl_data = numpy.array(valid_data_samples)
+        vl_data = numpy.array(valid_data_samples) / 255
         vl_labels = numpy.array([label_matrix[i] for i in valid_data_labels])
-    
+
         accs = []
         errs = []
         epochs = []
+
+        last_validation_err = 1000
 
         acc = self.get_accuracy(vl_data, vl_labels)
         # print("INIT ACC:", acc)
@@ -149,7 +150,7 @@ class MLP:
         epochs_without_improvement = 0
         best_err = 9999999
 
-        while epochs_without_improvement < 3 and epoch_count < 300 and best_err > threshold:
+        while epochs_without_improvement < 3 and epoch_count < 200 and last_validation_err > threshold:
             # single epoch
             epoch_count += 1
             for i in range(int(tr_data.shape[0]/batch_size)):
@@ -158,20 +159,25 @@ class MLP:
                 batch = tr_data[start_index:end_index,:]
                 batch_labels = tr_labels[start_index:end_index,:]
                 start_err, end_err, diff = self.learn_minibatch(batch, batch_labels, alpha=alpha)
+
             acc = self.get_accuracy(vl_data, vl_labels)
-            if end_err > best_err:
+            pred_after_update = self.batch_predict(vl_data)
+            new_valid_err = nll(pred_after_update, vl_labels)
+            if new_valid_err > last_validation_err:
                 epochs_without_improvement += 1
             else:
                 self.save_best_weights()
                 epochs_without_improvement = 0
-                best_err = end_err
+                best_err = new_valid_err
+            last_validation_err = new_valid_err
 
             epochs.append(epoch_count)
             errs.append(end_err)
             accs.append(acc)
 
             #print("EPOCH:", epoch_count)
-            #print("ERROR:", end_err)
+            #print("TRAIN ERROR:", end_err)
+            #print("VALID ERROR:", last_validation_err)
             #print("ACC:", acc)
 
         if epochs_without_improvement > 0:
@@ -182,18 +188,19 @@ class MLP:
             end_err = start_err
 
         # end report
-        print("TOTAL EPOCH:", epoch_count)
-        print("END ERROR:", end_err)
-        print("END ACC:", acc)
-        print("EARLY STOP:", epochs_without_improvement > 0)
+        #print("TOTAL EPOCH:", epoch_count)
+        #print("END TRAIN ERROR:", end_err)
+        #print("END VALID ERROR:", last_validation_err)
+        #print("END ACC:", acc)
+        #print("EARLY STOP:", epochs_without_improvement > 0)
 
-        return epoch_count, end_err, acc, epochs_without_improvement > 0, epochs, errs, accs
+        return epoch_count, end_err, acc, last_validation_err, epochs_without_improvement > 0, epochs, errs, accs
 
 
 
     # batch [i_sample, i_neuron]
     def learn_minibatch(self, batch, pred, alpha=0.001):
-
+        
         # Propagacja wprzód
         out0 = self.layers[0].batch_output(batch)
         act0 = self.layers[0].batch_activated_output(batch)
@@ -201,33 +208,33 @@ class MLP:
         out1 = self.layers[1].batch_output(act0)
         act1 = self.layers[1].batch_activated_output(act0)
 
-        out2 = self.layers[2].batch_output(act1)
-        act2 = self.layers[2].batch_activated_output(act1)
+        #out2 = self.layers[2].batch_output(act1)
+        #act2 = self.layers[2].batch_activated_output(act1)
 
-        err_init = nll(act2, pred)
+        err_init = nll(act1, pred)
 
         # Liczenie gradientów
-        delta_matrix_2 = numpy.zeros((batch.shape[0], self.layers[2].output_size))
+        delta_matrix_1 = numpy.zeros((batch.shape[0], self.layers[1].output_size))
         for i in range(batch.shape[0]):
-            smax_der_res = softmax_der(act2[i,:], pred[i])
-            delta_matrix_2[i,:] = smax_der_res
-
-        der1 = numpy.vectorize(self.layers[1].function_der)
-        delta_matrix_1 = (delta_matrix_2 @ self.layers[2].weights.T) * der1(out1)
+            smax_der_res = softmax_der(act1[i,:], pred[i])
+            delta_matrix_1[i,:] = smax_der_res
 
         der0 = numpy.vectorize(self.layers[0].function_der)
         delta_matrix_0 = (delta_matrix_1 @ self.layers[1].weights.T) * der0(out0)
+
+        #der0 = numpy.vectorize(self.layers[0].function_der)
+        #delta_matrix_0 = (delta_matrix_1 @ self.layers[1].weights.T) * der0(out0)
         
         # Aktualizacja wag
         for i in range(batch.shape[0]):
-            self.layers[2].weights = self.layers[2].weights - (alpha / batch.shape[0]) * numpy.outer(act1[i,:], delta_matrix_2[i,:])
+            #self.layers[2].weights = self.layers[2].weights - (alpha / batch.shape[0]) * numpy.outer(act1[i,:], delta_matrix_2[i,:])
             self.layers[1].weights = self.layers[1].weights - (alpha / batch.shape[0]) * numpy.outer(act0[i,:], delta_matrix_1[i,:])
             self.layers[0].weights = self.layers[0].weights - (alpha / batch.shape[0]) * numpy.outer(batch[i,:], delta_matrix_0[i,:])
-            self.layers[2].bias = self.layers[2].bias - (alpha / batch.shape[0]) * delta_matrix_2[i,:]
+            #self.layers[2].bias = self.layers[2].bias - (alpha / batch.shape[0]) * delta_matrix_2[i,:]
             self.layers[1].bias = self.layers[1].bias - (alpha / batch.shape[0]) * delta_matrix_1[i,:]
             self.layers[0].bias = self.layers[0].bias - (alpha / batch.shape[0]) * delta_matrix_0[i,:]
 
-        self.normalize_weights(MIN_ACT_SIGM, MAX_ACT_SIGM)
+        #self.normalize_weights(MIN_ACT_SIGM, MAX_ACT_SIGM)
 
         pred_after_update = self.batch_predict(batch)
         err_after = nll(pred_after_update, pred)
@@ -237,7 +244,7 @@ class MLP:
 
 
 def relu(z):
-    return max(z, 100) if z >= 0 else 0
+    return z if z >= 0 else 0
 
 
 def relu_der(z):
@@ -247,8 +254,8 @@ def relu_der(z):
 
 
 def sigmoid(z):
-    z = numpy.clip(z, MIN_ACT_SIGM, MAX_ACT_SIGM)
-    return 1 / (1 + numpy.e ** -z)
+    #z = numpy.clip(z, -10, 10)
+    return 1 / (1 + numpy.exp(-z))
 
 
 def sigmoid_der(z):
@@ -257,8 +264,8 @@ def sigmoid_der(z):
 
 
 def tanh(z):
-    z = numpy.clip(z, MIN_ACT_SIGM, MAX_ACT_SIGM)
-    return 2 / (1 + numpy.e ** (-2 * z)) - 1
+    #z = numpy.clip(z, -10, 10)
+    return 2 / (1 + numpy.exp(-2 * z)) - 1
 
 
 def tanh_der(z):
@@ -267,7 +274,8 @@ def tanh_der(z):
 
 
 def softmax(results):
-    results_e = [numpy.e ** (a/numpy.max(results)) for a in results]
+    #results = numpy.clip(results, -1000, 1000)
+    results_e = [numpy.e ** a for a in results]
     sum = numpy.sum(results_e)
     return [ezj / sum for ezj in results_e]
 
@@ -280,111 +288,209 @@ def nll(predicts, corrects):
     sum = 0
     for i in range(predicts.shape[0]):
         for j in range(predicts.shape[1]):
-            sum += -numpy.log(predicts[i,j]) * corrects[i,j]
+            sum += -numpy.log(max(predicts[i,j], 10**-5)) * corrects[i,j]
     return sum / predicts.shape[0]
 
 
 def main():
-    test_hidden_layer_size()
-
+    #perform_overnight_tests()
+    #learn_with_mnist()
+    #test_hidden_layer_size()
+    #learn_with_mnist_sigmoid()
+    compare_act_functions()
 
 def test_hidden_layer_size():
+    mndata = MNIST('./data/ubyte/')
+    #todo
+
+
+def perform_overnight_tests():
+    mndata = MNIST('./data/ubyte/')
+    tr_images, tr_labels = mndata.load_training()
+    vl_images, vl_labels = mndata.load_testing()
+    
+    print("HIDDEN LAYER SIZE TESTS:")
+    for i in range(NUM_OF_EXPERIMENTS):
+        model1 = MLP()
+        model1.add_layer(Layer(784, 25, relu, relu_der).init_weights(0.1))
+        model1.add_layer(Layer(25, 10, softmax, softmax_der, True).init_weights(0.1))
+        (epoch_count, tr_err, acc, val_err, early, _, _, _) = model1.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.03)
+        print("25 TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
+
+    for i in range(NUM_OF_EXPERIMENTS):
+        model1 = MLP()
+        model1.add_layer(Layer(784, 50, relu, relu_der).init_weights(0.1))
+        model1.add_layer(Layer(50, 10, softmax, softmax_der, True).init_weights(0.1))
+        (epoch_count, tr_err, acc, val_err, early, _, _, _) = model1.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.03)
+        print("50 TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
+
+    for i in range(NUM_OF_EXPERIMENTS):
+        model1 = MLP()
+        model1.add_layer(Layer(784, 100, relu, relu_der).init_weights(0.1))
+        model1.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
+        (epoch_count, tr_err, acc, val_err, early, _, _, _) = model1.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.03)
+        print("100 TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
+
+    for i in range(NUM_OF_EXPERIMENTS):
+        model1 = MLP()
+        model1.add_layer(Layer(784, 200, relu, relu_der).init_weights(0.1))
+        model1.add_layer(Layer(200, 10, softmax, softmax_der, True).init_weights(0.1))
+        (epoch_count, tr_err, acc, val_err, early, _, _, _) = model1.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.03)
+        print("200 TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
+
+    for i in range(NUM_OF_EXPERIMENTS):
+        model1 = MLP()
+        model1.add_layer(Layer(784, 400, relu, relu_der).init_weights(0.1))
+        model1.add_layer(Layer(400, 10, softmax, softmax_der, True).init_weights(0.1))
+        (epoch_count, tr_err, acc, val_err, early, _, _, _) = model1.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.03)
+        print("400 TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
+    
+    print("HL END\n")
+
+    print("ALPHA TESTS:")
+    for i in range(NUM_OF_EXPERIMENTS):
+        model1 = MLP()
+        model1.add_layer(Layer(784, 100, relu, relu_der).init_weights(0.1))
+        model1.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
+        (epoch_count, tr_err, acc, val_err, early, _, _, _) = model1.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.001)
+        print("0.001 TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
+
+    for i in range(NUM_OF_EXPERIMENTS):
+        model1 = MLP()
+        model1.add_layer(Layer(784, 100, relu, relu_der).init_weights(0.1))
+        model1.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
+        (epoch_count, tr_err, acc, val_err, early, _, _, _) = model1.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.005)
+        print("0.005 TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
+
+    for i in range(NUM_OF_EXPERIMENTS):
+        model1 = MLP()
+        model1.add_layer(Layer(784, 100, relu, relu_der).init_weights(0.1))
+        model1.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
+        (epoch_count, tr_err, acc, val_err, early, _, _, _) = model1.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.01)
+        print("0.01 TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
+
+    for i in range(NUM_OF_EXPERIMENTS):
+        model1 = MLP()
+        model1.add_layer(Layer(784, 100, relu, relu_der).init_weights(0.1))
+        model1.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
+        (epoch_count, tr_err, acc, val_err, early, _, _, _) = model1.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.05)
+        print("0.05 TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
+
+    for i in range(NUM_OF_EXPERIMENTS):
+        model1 = MLP()
+        model1.add_layer(Layer(784, 100, relu, relu_der).init_weights(0.1))
+        model1.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
+        (epoch_count, tr_err, acc, val_err, early, _, _, _) = model1.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.1)
+        print("0.1 TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
+
+    print("ALPHA END\n")
+
+    print("BATCH SIZE TESTS:")
+    for i in range(NUM_OF_EXPERIMENTS):
+        model1 = MLP()
+        model1.add_layer(Layer(784, 100, relu, relu_der).init_weights(0.1))
+        model1.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
+        (epoch_count, tr_err, acc, val_err, early, _, _, _) = model1.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 50, 0.05)
+        print("50 TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
+
+    for i in range(NUM_OF_EXPERIMENTS):
+        model1 = MLP()
+        model1.add_layer(Layer(784, 100, relu, relu_der).init_weights(0.1))
+        model1.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
+        (epoch_count, tr_err, acc, val_err, early, _, _, _) = model1.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 100, 0.05)
+        print("100 TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
+
+    for i in range(NUM_OF_EXPERIMENTS):
+        model1 = MLP()
+        model1.add_layer(Layer(784, 100, relu, relu_der).init_weights(0.1))
+        model1.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
+        (epoch_count, tr_err, acc, val_err, early, _, _, _) = model1.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 200, 0.05)
+        print("200 TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
+
+    for i in range(NUM_OF_EXPERIMENTS):
+        model1 = MLP()
+        model1.add_layer(Layer(784, 100, relu, relu_der).init_weights(0.1))
+        model1.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
+        (epoch_count, tr_err, acc, val_err, early, _, _, _) = model1.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.05)
+        print("400 TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
+
+    for i in range(NUM_OF_EXPERIMENTS):
+        model1 = MLP()
+        model1.add_layer(Layer(784, 100, relu, relu_der).init_weights(0.1))
+        model1.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
+        (epoch_count, tr_err, acc, val_err, early, _, _, _) = model1.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 1000, 0.05)
+        print("1000 TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
+
+    print("BATCH END\n")
+
+    print("INIT WEIGHTS TESTS:")
+    for i in range(NUM_OF_EXPERIMENTS):
+        model1 = MLP()
+        model1.add_layer(Layer(784, 100, relu, relu_der).init_weights(0.1))
+        model1.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
+        (epoch_count, tr_err, acc, val_err, early, _, _, _) = model1.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.05)
+        print("0.1 TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
+
+    for i in range(NUM_OF_EXPERIMENTS):
+        model1 = MLP()
+        model1.add_layer(Layer(784, 100, relu, relu_der).init_weights(0.3))
+        model1.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.3))
+        (epoch_count, tr_err, acc, val_err, early, _, _, _) = model1.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.05)
+        print("0.3 TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
+
+    for i in range(NUM_OF_EXPERIMENTS):
+        model1 = MLP()
+        model1.add_layer(Layer(784, 100, relu, relu_der).init_weights(0.5))
+        model1.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.5))
+        (epoch_count, tr_err, acc, val_err, early, _, _, _) = model1.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.05)
+        print("0.5 TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
+
+    for i in range(NUM_OF_EXPERIMENTS):
+        model1 = MLP()
+        model1.add_layer(Layer(784, 100, relu, relu_der).init_weights(0.8))
+        model1.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.8))
+        (epoch_count, tr_err, acc, val_err, early, _, _, _) = model1.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.05)
+        print("0.8 TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
+
+    print("WEIGHTS END\n")
+
+
+def compare_act_functions():
     mndata = MNIST('./data/ubyte/')
     tr_images, tr_labels = mndata.load_training()
     vl_images, vl_labels = mndata.load_testing()
 
-    print("Start learning...")
-    
-    model1 = MLP()
-    model1.add_layer(Layer(784, 30, relu, relu_der).init_weights(0.1))
-    model1.add_layer(Layer(30, 30, relu, relu_der).init_weights(0.1))
-    model1.add_layer(Layer(30, 10, softmax, softmax_der, True).init_weights(0.1))
-    data1 = model1.learn(tr_images, tr_labels, vl_images, vl_labels, 1000, 0.01, threshold=0.25)
+    #for i in range(NUM_OF_EXPERIMENTS):
+    #    model = MLP()
+    #    model.add_layer(Layer(784, 100, relu, relu_der).init_weights(0.1))
+    #    model.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
+    #    (epoch_count, tr_err, acc, val_err, early, _, _, _) = model.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.1, 0.35)
+    #    print("ReLU TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
 
-    print("Model 1 complete...")
+    for i in range(NUM_OF_EXPERIMENTS):
+        model = MLP()
+        model.add_layer(Layer(784, 100, sigmoid, sigmoid_der).init_weights(0.1))
+        model.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
+        (epoch_count, tr_err, acc, val_err, early, _, _, _) = model.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.4, 0.35)
+        print("Sigmoid TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
 
-    model2 = MLP()
-    model2.add_layer(Layer(784, 50, relu, relu_der).init_weights(0.1))
-    model2.add_layer(Layer(50, 50, relu, relu_der).init_weights(0.1))
-    model2.add_layer(Layer(50, 10, softmax, softmax_der, True).init_weights(0.1))
-    data2 = model2.learn(tr_images, tr_labels, vl_images, vl_labels, 1000, 0.01, threshold=0.30)
+    #for i in range(NUM_OF_EXPERIMENTS):
+    #    model = MLP()
+    #    model.add_layer(Layer(784, 100, tanh, tanh_der).init_weights(0.1))
+    #    model.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
+    #    (epoch_count, tr_err, acc, val_err, early, _, _, _) = model.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.1, 0.35)
+    #    print("Tanh TEST", i, "ACC:", acc, "T_ERR:", tr_err, "V_ERR:", val_err, "EPO:", epoch_count, "ES:", early)
 
-    print("Model 2 complete...")
 
-    model3 = MLP()
-    model3.add_layer(Layer(784, 100, relu, relu_der).init_weights(0.1))
-    model3.add_layer(Layer(100, 100, relu, relu_der).init_weights(0.1))
-    model3.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
-    data3 = model3.learn(tr_images, tr_labels, vl_images, vl_labels, 1000, 0.01, threshold=0.30)
+def learn_with_mnist_sigmoid():
+    mndata = MNIST('./data/ubyte/')
+    tr_images, tr_labels = mndata.load_training()
+    vl_images, vl_labels = mndata.load_testing()
 
-    print("Model 3 complete...")
-
-    model4 = MLP()
-    model4.add_layer(Layer(784, 300, relu, relu_der).init_weights(0.1))
-    model4.add_layer(Layer(300, 100, relu, relu_der).init_weights(0.1))
-    model4.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
-    data4 = model4.learn(tr_images, tr_labels, vl_images, vl_labels, 1000, 0.01, threshold=0.30)
-
-    print("Model 4 complete...")
-
-    model5 = MLP()
-    model5.add_layer(Layer(784, 500, relu, relu_der).init_weights(0.1))
-    model5.add_layer(Layer(500, 150, relu, relu_der).init_weights(0.1))
-    model5.add_layer(Layer(150, 10, softmax, softmax_der, True).init_weights(0.1))
-    data5 = model5.learn(tr_images, tr_labels, vl_images, vl_labels, 1000, 0.01, threshold=0.30)
-
-    print("Model 5 complete...")
-
-    print(data1)
-    print(data2)
-    print(data3)
-    print(data4)
-    print(data5)
-
-    x = range(100)
-    epo1 = data1[4][0:99]
-    err1 = data1[5][0:99]
-    acc1 = data1[6][0:99]
-
-    epo2 = data2[4][0:99]
-    err2 = data2[5][0:99]
-    acc2 = data2[6][0:99]
-
-    epo3 = data3[4][0:99]
-    err3 = data3[5][0:99]
-    acc3 = data3[6][0:99]
-
-    epo4 = data4[4][0:99]
-    err4 = data4[5][0:99]
-    acc4 = data4[6][0:99]
-
-    epo5 = data5[4][0:99]
-    err5 = data5[5][0:99]
-    acc5 = data5[6][0:99]
-    
-    plt.plot(x, err1, label = '30, 30')
-    plt.plot(x, err2, label = '50, 50')
-    plt.plot(x, err3, label = '100, 100')
-    plt.plot(x, err4, label = '300, 100')
-    plt.plot(x, err5, label = '500, 150')
-    
-    plt.xlabel('epoch')
-    plt.ylabel('error')
-    plt.title('Spadek błędu w zależności od rozmiaru warstw ukrytych')
-    plt.savefig('image1.png')
-    plt.show()
-
-    plt.plot(x, acc1, label = '30, 30')
-    plt.plot(x, acc2, label = '50, 50')
-    plt.plot(x, acc3, label = '100, 100')
-    plt.plot(x, acc4, label = '300, 100')
-    plt.plot(x, acc5, label = '500, 150')
-    
-    plt.xlabel('epoch')
-    plt.ylabel('accuracy')
-    plt.title('Wzrost skuteczności w zależności od rozmiaru warstw ukrytych')
-    plt.savefig('image2.png')
-    plt.show()
+    model = MLP()
+    model.add_layer(Layer(784, 100, tanh, tanh_der).init_weights(0.1))
+    model.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
+    model.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.08)
 
 
 def learn_with_mnist():
@@ -393,10 +499,10 @@ def learn_with_mnist():
     vl_images, vl_labels = mndata.load_testing()
 
     model = MLP()
-    model.add_layer(Layer(784, 30, relu, relu_der).init_weights(0.1))
-    model.add_layer(Layer(30, 30, relu, relu_der).init_weights(0.1))
-    model.add_layer(Layer(30, 10, softmax, softmax_der, True).init_weights(0.1))
-    model.learn(tr_images, tr_labels, vl_images, vl_labels, 1000, 0.005)
+    model.add_layer(Layer(784, 400, relu, relu_der).init_weights(0.1))
+    #model.add_layer(Layer(30, 30, relu, relu_der).init_weights(0.1))
+    model.add_layer(Layer(400, 10, softmax, softmax_der, True).init_weights(0.1))
+    model.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.01)
 
 
 def test_learn():
