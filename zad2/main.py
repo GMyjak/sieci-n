@@ -4,7 +4,12 @@ from mnist import MNIST
 MIN_ACT_SIGM = -200
 MAX_ACT_SIGM = 200
 
-NUM_OF_EXPERIMENTS = 5
+NUM_OF_EXPERIMENTS = 10
+
+GAMMA = 0.9
+
+MOMENTUM = False
+NESTEROV = True
 
 
 label_matrix = [[1,0,0,0,0,0,0,0,0,0],
@@ -30,6 +35,8 @@ class Layer:
         self.weights = []
         self.best_bias = None
         self.best_weights = None
+        self.last_weight_delta = []
+        self.last_bias_delta = []
 
 
     def init_weights(self, std_dev):
@@ -155,7 +162,7 @@ class MLP:
             epoch_count += 1
             for i in range(int(tr_data.shape[0]/batch_size)):
                 start_index = i * batch_size
-                end_index = (i + 1) * batch_size - 1
+                end_index = max((i + 1) * batch_size - 1, tr_data.shape[0])
                 batch = tr_data[start_index:end_index,:]
                 batch_labels = tr_labels[start_index:end_index,:]
                 start_err, end_err, diff = self.learn_minibatch(batch, batch_labels, alpha=alpha)
@@ -175,10 +182,10 @@ class MLP:
             errs.append(end_err)
             accs.append(acc)
 
-            #print("EPOCH:", epoch_count)
-            #print("TRAIN ERROR:", end_err)
-            #print("VALID ERROR:", last_validation_err)
-            #print("ACC:", acc)
+            print("EPOCH:", epoch_count)
+            print("TRAIN ERROR:", end_err)
+            print("VALID ERROR:", last_validation_err)
+            print("ACC:", acc)
 
         if epochs_without_improvement > 0:
             self.load_best_weights()
@@ -188,11 +195,11 @@ class MLP:
             end_err = start_err
 
         # end report
-        #print("TOTAL EPOCH:", epoch_count)
-        #print("END TRAIN ERROR:", end_err)
-        #print("END VALID ERROR:", last_validation_err)
-        #print("END ACC:", acc)
-        #print("EARLY STOP:", epochs_without_improvement > 0)
+        print("TOTAL EPOCH:", epoch_count)
+        print("END TRAIN ERROR:", end_err)
+        print("END VALID ERROR:", last_validation_err)
+        print("END ACC:", acc)
+        print("EARLY STOP:", epochs_without_improvement > 0)
 
         return epoch_count, end_err, acc, last_validation_err, epochs_without_improvement > 0, epochs, errs, accs
 
@@ -226,15 +233,58 @@ class MLP:
         #delta_matrix_0 = (delta_matrix_1 @ self.layers[1].weights.T) * der0(out0)
         
         # Aktualizacja wag
+        weight_delta_1 = numpy.zeros(shape=self.layers[1].weights.shape)
+        weight_delta_0 = numpy.zeros(shape=self.layers[0].weights.shape)
+        bias_delta_1 = numpy.zeros(shape=self.layers[1].bias.shape)
+        bias_delta_0 = numpy.zeros(shape=self.layers[0].bias.shape)
         for i in range(batch.shape[0]):
-            #self.layers[2].weights = self.layers[2].weights - (alpha / batch.shape[0]) * numpy.outer(act1[i,:], delta_matrix_2[i,:])
-            self.layers[1].weights = self.layers[1].weights - (alpha / batch.shape[0]) * numpy.outer(act0[i,:], delta_matrix_1[i,:])
-            self.layers[0].weights = self.layers[0].weights - (alpha / batch.shape[0]) * numpy.outer(batch[i,:], delta_matrix_0[i,:])
-            #self.layers[2].bias = self.layers[2].bias - (alpha / batch.shape[0]) * delta_matrix_2[i,:]
-            self.layers[1].bias = self.layers[1].bias - (alpha / batch.shape[0]) * delta_matrix_1[i,:]
-            self.layers[0].bias = self.layers[0].bias - (alpha / batch.shape[0]) * delta_matrix_0[i,:]
+            weight_delta_1 += (alpha / batch.shape[0]) * numpy.outer(act0[i,:], delta_matrix_1[i,:])
+            weight_delta_0 += (alpha / batch.shape[0]) * numpy.outer(batch[i,:], delta_matrix_0[i,:])
 
-        #self.normalize_weights(MIN_ACT_SIGM, MAX_ACT_SIGM)
+            bias_delta_1 += (alpha / batch.shape[0]) * delta_matrix_1[i,:]
+            bias_delta_0 += (alpha / batch.shape[0]) * delta_matrix_0[i,:]
+
+        if MOMENTUM:
+            if self.layers[0].last_weight_delta != []:
+                weight_delta_1 += GAMMA * self.layers[1].last_weight_delta
+                weight_delta_0 += GAMMA * self.layers[0].last_weight_delta
+                bias_delta_1 += GAMMA * self.layers[1].last_bias_delta
+                bias_delta_0 += GAMMA * self.layers[0].last_bias_delta
+            self.layers[1].last_weight_delta = weight_delta_1
+            self.layers[0].last_weight_delta = weight_delta_0
+            self.layers[1].last_bias_delta = bias_delta_1
+            self.layers[0].last_bias_delta = bias_delta_0
+        elif NESTEROV:
+            weight_delta_1_tmp = self.layers[1].last_weight_delta
+            weight_delta_0_tmp = self.layers[0].last_weight_delta
+            bias_delta_1_tmp = self.layers[1].last_bias_delta
+            bias_delta_0_tmp = self.layers[0].last_bias_delta
+            if weight_delta_1_tmp != []:
+                self.layers[1].last_weight_delta = GAMMA * self.layers[1].last_weight_delta - weight_delta_1
+                self.layers[0].last_weight_delta = GAMMA * self.layers[0].last_weight_delta - weight_delta_0
+                self.layers[1].last_bias_delta = GAMMA * self.layers[1].last_bias_delta - bias_delta_1
+                self.layers[0].last_bias_delta = GAMMA * self.layers[0].last_bias_delta - bias_delta_0
+            else:
+                self.layers[1].last_weight_delta = weight_delta_1
+                self.layers[0].last_weight_delta = weight_delta_0
+                self.layers[1].last_bias_delta = bias_delta_1
+                self.layers[0].last_bias_delta = bias_delta_0
+            weight_delta_1 = -((1 + GAMMA) * weight_delta_1)
+            weight_delta_0 = -((1 + GAMMA) * weight_delta_0)
+            bias_delta_1 = -((1 + GAMMA) * bias_delta_1)
+            bias_delta_0 = -((1 + GAMMA) * bias_delta_0)
+            if weight_delta_1_tmp != []:
+                weight_delta_1 += GAMMA * weight_delta_1_tmp
+                weight_delta_0 += GAMMA * weight_delta_0_tmp
+                bias_delta_1 += GAMMA * bias_delta_1_tmp
+                bias_delta_0 += GAMMA * bias_delta_0_tmp
+            else:
+                print("XD")
+                
+        self.layers[1].weights = self.layers[1].weights - weight_delta_1
+        self.layers[0].weights = self.layers[0].weights - weight_delta_0    
+        self.layers[1].bias = self.layers[1].bias - bias_delta_1
+        self.layers[0].bias = self.layers[0].bias - bias_delta_0
 
         pred_after_update = self.batch_predict(batch)
         err_after = nll(pred_after_update, pred)
@@ -294,10 +344,10 @@ def nll(predicts, corrects):
 
 def main():
     #perform_overnight_tests()
-    #learn_with_mnist()
+    learn_with_mnist()
     #test_hidden_layer_size()
     #learn_with_mnist_sigmoid()
-    compare_act_functions()
+    #compare_act_functions()
 
 def test_hidden_layer_size():
     mndata = MNIST('./data/ubyte/')
@@ -490,7 +540,7 @@ def learn_with_mnist_sigmoid():
     model = MLP()
     model.add_layer(Layer(784, 100, tanh, tanh_der).init_weights(0.1))
     model.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
-    model.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.08)
+    model.learn(tr_images, tr_labels, vl_images, vl_labels, 400, 0.1)
 
 
 def learn_with_mnist():
@@ -499,10 +549,10 @@ def learn_with_mnist():
     vl_images, vl_labels = mndata.load_testing()
 
     model = MLP()
-    model.add_layer(Layer(784, 400, relu, relu_der).init_weights(0.1))
+    model.add_layer(Layer(784, 100, relu, relu_der).init_weights(0.1))
     #model.add_layer(Layer(30, 30, relu, relu_der).init_weights(0.1))
-    model.add_layer(Layer(400, 10, softmax, softmax_der, True).init_weights(0.1))
-    model.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.01)
+    model.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
+    model.learn(tr_images[0:10000], tr_labels[0:10000], vl_images[0:1000], vl_labels[0:1000], 400, 0.1)
 
 
 def test_learn():
