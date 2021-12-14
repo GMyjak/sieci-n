@@ -15,7 +15,7 @@ MOMENTUM = False
 NESTEROV = False
 ADAGRAD = False
 ADADELTA = False
-ADAM = False
+ADAM = True
 
 NORMAL = True
 XAVIER = False
@@ -218,10 +218,10 @@ class MLP:
             errs.append(end_err)
             accs.append(acc)
 
-            #print("EPOCH:", epoch_count)
-            #print("TRAIN ERROR:", end_err)
-            #print("VALID ERROR:", last_validation_err)
-            #print("ACC:", acc)
+            print("EPOCH:", epoch_count)
+            print("TRAIN ERROR:", end_err)
+            print("VALID ERROR:", last_validation_err)
+            print("ACC:", acc)
 
         if epochs_without_improvement > 0:
             self.load_best_weights()
@@ -291,8 +291,6 @@ class MLP:
             self.layers[1].last_bias_delta = bias_delta_1
             self.layers[0].last_bias_delta = bias_delta_0
         elif NESTEROV:
-            # w_del_tmp => v
-            # mu => GAMMA
             weight_delta_1_tmp = self.layers[1].last_weight_delta
             weight_delta_0_tmp = self.layers[0].last_weight_delta
             bias_delta_1_tmp = self.layers[1].last_bias_delta
@@ -459,7 +457,7 @@ def nll(predicts, corrects):
 
 
 def main():
-    tests_init()
+    learn_with_mnist()
 
 
 def learn_with_mnist():
@@ -499,7 +497,7 @@ def tests():
         model = MLP()
         model.add_layer(Layer(784, 100, relu, relu_der).init_weights(0.1))
         model.add_layer(Layer(100, 10, softmax, softmax_der, True).init_weights(0.1))
-        model.learn(tr_images[0:5000], tr_labels[0:5000], vl_images[0:2000], vl_labels[0:2000], 200, ALPHA, threshold=0.35)
+        model.learn(tr_images[0:2000], tr_labels[0:2000], vl_images[0:2000], vl_labels[0:2000], 200, ALPHA, threshold=0.35)
 
     MOMENTUM = False
     NESTEROV = True
